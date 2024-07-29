@@ -1,0 +1,117 @@
+#Here is the script to process to raw dump of posters that we will receive.
+
+import os
+import shutil
+import pandas as pd
+import tkinter as tk
+from tkinter import filedialog
+
+
+def rename_pdfs(directory):
+    # Loop through each file in the directory
+    for filename in os.listdir(directory):
+        # Check if the file name starts with "submission_" and ends with ".pdf"
+        if filename.startswith('submission_') and filename.endswith('.pdf'):
+            # Create the new file name by removing the "submission_" part
+            new_filename = filename.replace('submission_', '', 1)
+            # Get the full path of the current and new file names
+            old_file = os.path.join(directory, filename)
+            new_file = os.path.join(directory, new_filename)
+            # Rename the file
+            os.rename(old_file, new_file)
+            print(f'Renamed: {filename} -> {new_filename}')
+
+    print("Renaming completed.")
+
+
+def sanitize_filename(filename):
+    return filename.replace(' ', '_').replace(':', '').replace('\n', '')
+
+
+def copy_and_assign_screens(df, pdf_directory, output_dir):
+    # Extract unique dates and start times from the dataframe
+    df['date'] = pd.to_datetime(df['date']).dt.date
+    df['start time (local time)'] = pd.to_datetime(df['start time (local time)'], format='%H:%M:%S').dt.time
+
+    unique_dates = df['date'].unique()
+
+    # Create directories for each unique date and start time
+    for date in unique_dates:
+        date_str = date.strftime('%Y-%m-%d')
+        date_dir = os.path.join(output_dir, date_str)
+        os.makedirs(date_dir, exist_ok=True)
+        print(f"Created directory: {date_dir}")
+
+        start_times = sorted(df[df['date'] == date]['start time (local time)'].unique())
+        session_labels = ['session 1', 'session 2']
+        for session_label, start_time in zip(session_labels, start_times):
+            start_time_dir = os.path.join(date_dir, session_label)
+            os.makedirs(start_time_dir, exist_ok=True)
+            print(f"Created directory: {start_time_dir}")
+
+    # Assign screens and copy PDFs to the appropriate date and start time folder
+    for date in unique_dates:
+        date_str = date.strftime('%Y-%m-%d')
+        for session_label in session_labels:
+            screen_number = 1
+            for index, row in df[(df['date'] == date) & (
+                    df['start time (local time)'] == sorted(df[df['date'] == date]['start time (local time)'].unique())[
+                session_labels.index(session_label)])].iterrows():
+                abstract_name = str(row['Abstract Submission ID'])
+                pdf_filename = sanitize_filename(abstract_name) + '.pdf'
+                pdf_path = os.path.join(pdf_directory, pdf_filename)
+
+                if os.path.exists(pdf_path):
+                    new_pdf_filename = f"{screen_number}_{pdf_filename}"
+                    destination_dir = os.path.join(output_dir, date_str, session_label)
+                    destination_path = os.path.join(destination_dir, new_pdf_filename)
+                    shutil.copy(pdf_path, destination_path)
+                    print(f"Copied {pdf_filename} to {destination_path}")
+
+                    # Update the dataframe with the screen number and rename the pdf
+                    df.at[index, 'Screen number'] = screen_number
+                    screen_number += 1
+                else:
+                    print(f"PDF {pdf_filename} not found in {pdf_directory}")
+
+    print("All PDFs copied and screens assigned successfully.")
+    return df
+
+
+if __name__ == "__main__":
+    # Create a Tkinter root window
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+
+    # Open a file dialog to select the directory with PDF files
+    pdf_directory = filedialog.askdirectory(title="Select Directory with PDF Files")
+
+    # Check if a directory was selected
+    if pdf_directory:
+        rename_pdfs(pdf_directory)
+
+        # Open a file dialog to select the Excel file
+        excel_file_path = filedialog.askopenfilename(title="Select Excel File",
+                                                     filetypes=[("Excel files", "*.xlsx *.xls")])
+
+        # Check if an Excel file was selected
+        if excel_file_path:
+            # Load the spreadsheet
+            df = pd.read_excel(excel_file_path)
+
+            # Open a file dialog to select the output directory for the poster sessions
+            output_dir = filedialog.askdirectory(title="Select Output Directory for Poster Sessions")
+
+            # Check if an output directory was selected
+            if output_dir:
+                updated_df = copy_and_assign_screens(df, pdf_directory, output_dir)
+
+                # Save the updated dataframe back to the Excel file
+                updated_df.to_excel(excel_file_path, index=False)
+                print("Updated Excel file with screen numbers.")
+            else:
+                print("No output directory selected.")
+        else:
+            print("No Excel file selected.")
+    else:
+        print("No directory selected.")
